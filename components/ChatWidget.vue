@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, nextTick } from "vue";
+import { ref, computed, nextTick, watch, onMounted, onUpdated } from "vue";
 import { useChat } from "../composables/useChat";
 
 import MarkdownIt from "markdown-it";
@@ -35,7 +35,7 @@ const props = withDefaults(defineProps<Props>(), {
   - "React와 Vue 차이 알려줘"
   - "코딩 테스트 연습 문제 추천해줘"`,
   maxTokens: 1536,
-  stream: false, // 완성문 한 번에 표시 (끊김 완화)
+  stream: false, // true로 설정시 스트리밍모드
 });
 
 const open = ref(false);
@@ -61,6 +61,7 @@ const { messages, pending, error, send, reset } = useChat({
   stream: props.stream,
 });
 
+// 비스트리밍모드 완성본 전달용
 const renderedMessages = computed(() => {
   const arr = [...messages.value];
   if (
@@ -72,6 +73,11 @@ const renderedMessages = computed(() => {
   }
   return arr;
 });
+
+// 표시용 배열 (스트리밍 모드면 messages, 아니면 renderedMessages)
+const displayed = computed(() =>
+  props.stream ? messages.value : renderedMessages.value
+);
 
 function renderMD(src: string) {
   const html = md.render(src ?? "");
@@ -150,6 +156,20 @@ async function enhanceCodeBlocks() {
     pre.appendChild(btn);
   });
 }
+
+// 마지막 메시지 내용만 안전하게 계산
+const lastContent = computed(() => {
+  const len = messages.value.length;
+  const lastMsg = len > 0 ? messages.value[len - 1] : undefined;
+  return lastMsg && lastMsg.content ? lastMsg.content : "";
+});
+
+// 스트리밍 중 타자치듯 내려가기
+watch(lastContent, async () => {
+  if (props.stream && pending.value) {
+    await scrollToBottom();
+  }
+});
 
 /* pending이 끝나는 시점에만 실행 */
 watch(pending, async (p) => {
@@ -240,7 +260,7 @@ onUpdated(enhanceCodeBlocks);
 
       <!-- 메시지 영역 -->
       <div ref="scrollEl" class="flex-1 overflow-auto p-3 space-y-2 text-sm">
-        <div v-for="(m, i) in messages" :key="i">
+        <div v-for="(m, i) in displayed" :key="i">
           <template v-if="m.role === 'system'">
             <div class="text-xs text-gray-400 italic">{{ m.content }}</div>
           </template>
@@ -256,8 +276,6 @@ onUpdated(enhanceCodeBlocks);
               <div class="text-xs font-semibold mb-1">
                 {{ m.role === "user" ? "You" : "AI" }}
               </div>
-
-              <!-- 줄바꿈 제거(가로 스크롤), 표는 유지 -->
               <div
                 v-if="m.role === 'assistant'"
                 class="prose prose-sm max-w-none prose-table:shadow-sm"
