@@ -4,7 +4,7 @@ export default defineNuxtConfig({
   devtools: { enabled: true },
   pages: true,
   runtimeConfig: {
-    openaiApiKey: process.env.OPENAI_API_KEY,
+    openaiApiKey: process.env.CF_API_KEY,
     openaiModel: process.env.OPENAI_MODEL || "gpt-4o-mini",
     openaiBaseUrl: process.env.OPENAI_BASE_URL || "https://api.openai.com/v1",
     public: {},
