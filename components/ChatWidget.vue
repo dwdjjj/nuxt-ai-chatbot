@@ -35,7 +35,7 @@ const props = withDefaults(defineProps<Props>(), {
   - "React와 Vue 차이 알려줘"
   - "코딩 테스트 연습 문제 추천해줘"`,
   maxTokens: 1536,
-  stream: false, // 스트리밍 끄고 완성문 한 번에 표시 (끊김 완화)
+  stream: false, // 완성문 한 번에 표시 (끊김 완화)
 });
 
 const open = ref(false);
@@ -58,7 +58,7 @@ const { messages, pending, error, send, reset } = useChat({
   maxHistory: props.maxHistory,
   systemPrompt: props.systemPrompt,
   maxTokens: props.maxTokens,
-  // stream: props.stream,
+  stream: props.stream,
 });
 
 const renderedMessages = computed(() => {
