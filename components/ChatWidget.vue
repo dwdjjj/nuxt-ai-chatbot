@@ -61,6 +61,18 @@ const { messages, pending, error, send, reset } = useChat({
   // stream: props.stream,
 });
 
+const renderedMessages = computed(() => {
+  const arr = [...messages.value];
+  if (
+    pending.value &&
+    arr.length &&
+    arr[arr.length - 1]?.role === "assistant"
+  ) {
+    arr.pop();
+  }
+  return arr;
+});
+
 function renderMD(src: string) {
   const html = md.render(src ?? "");
   return DOMPurify.sanitize(html);
@@ -97,6 +109,56 @@ async function scrollToBottom() {
   if (el) el.scrollTop = el.scrollHeight;
 }
 
+// 코드 블록 복사
+async function enhanceCodeBlocks() {
+  await nextTick();
+  const root = scrollEl.value;
+  if (!root) return;
+
+  root.querySelectorAll("pre").forEach((pre) => {
+    if (pre.getAttribute("data-enhanced")) return;
+
+    const codeEl = pre.querySelector("code");
+    const original = (codeEl?.textContent ?? pre.textContent ?? "").trimEnd();
+    pre.setAttribute("data-code-raw", original);
+
+    pre.setAttribute("data-enhanced", "1");
+    pre.style.position = "relative";
+
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.textContent = "복사";
+    btn.className =
+      "absolute top-2 right-2 text-xs px-2 py-1 rounded bg-black/70 text-white hover:bg-black";
+
+    btn.addEventListener("click", async (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const raw = pre.getAttribute("data-code-raw") ?? original;
+      try {
+        await navigator.clipboard.writeText(raw);
+        const prev = btn.textContent;
+        btn.textContent = "복사됨!";
+        setTimeout(() => (btn.textContent = prev || "복사"), 1200);
+      } catch {
+        const prev = btn.textContent;
+        btn.textContent = "복사 실패";
+        setTimeout(() => (btn.textContent = prev || "복사"), 1200);
+      }
+    });
+
+    pre.appendChild(btn);
+  });
+}
+
+/* pending이 끝나는 시점에만 실행 */
+watch(pending, async (p) => {
+  if (!p) {
+    await enhanceCodeBlocks();
+    await scrollToBottom();
+  }
+});
+
 function toggle() {
   if (!open.value) {
     expanding.value = true;
@@ -105,6 +167,7 @@ function toggle() {
       expanding.value = false;
       ensureGreeting();
       await scrollToBottom();
+      await enhanceCodeBlocks();
     }, 300);
   } else {
     open.value = false;
@@ -116,14 +179,15 @@ async function onSubmit() {
   if (!q) return;
   input.value = "";
   await send(q);
-  await scrollToBottom();
 }
 
 async function askQuick(prompt: string) {
   input.value = "";
   await send(prompt);
-  await scrollToBottom();
 }
+
+onMounted(enhanceCodeBlocks);
+onUpdated(enhanceCodeBlocks);
 </script>
 
 <template>
@@ -189,12 +253,14 @@ async function askQuick(prompt: string) {
                   : 'bg-blue-50 border border-blue-100',
               ]"
             >
-              <strong v-if="m.role === 'user'">You:</strong>
-              <strong v-else>AI:</strong>
-              <!-- ⬇️ 변경: assistant 응답은 Markdown 렌더링 -->
+              <div class="text-xs font-semibold mb-1">
+                {{ m.role === "user" ? "You" : "AI" }}
+              </div>
+
+              <!-- 줄바꿈 제거(가로 스크롤), 표는 유지 -->
               <div
                 v-if="m.role === 'assistant'"
-                class="prose prose-sm max-w-none prose-pre:whitespace-pre-wrap prose-table:shadow-sm"
+                class="prose prose-sm max-w-none prose-table:shadow-sm"
                 v-html="renderMD(m.content)"
               />
               <div v-else class="whitespace-pre-wrap">{{ m.content }}</div>
@@ -202,7 +268,14 @@ async function askQuick(prompt: string) {
           </template>
         </div>
 
-        <div v-if="pending" class="text-xs text-gray-500">생각 중...</div>
+        <!-- 작성 중 버블 -->
+        <div
+          v-if="pending"
+          class="px-3 py-2 rounded-xl bg-blue-50 border border-blue-100 text-xs text-gray-600"
+        >
+          AI가 응답을 작성 중입니다…
+        </div>
+
         <div v-if="error" class="text-xs text-red-500">오류: {{ error }}</div>
 
         <!-- 빠른 질문 버튼 -->
@@ -274,5 +347,19 @@ async function askQuick(prompt: string) {
   background: #0b0f190d;
   padding: 0.75rem;
   border-radius: 0.5rem;
+}
+.prose :where(pre) {
+  background: #0b0f190d;
+  padding: 0.75rem 0.9rem;
+  border-radius: 0.5rem;
+  border: 1px solid #e5e7eb;
+  overflow-x: auto;
+  overflow-y: hidden;
+  white-space: pre; /* 줄바꿈 방지 */
+  font-size: 0.85rem;
+  line-height: 1.6;
+}
+.prose :where(pre code) {
+  white-space: pre; /* 중첩 보정 */
 }
 </style>
