@@ -2,6 +2,15 @@
 import { ref, computed, nextTick } from "vue";
 import { useChat } from "../composables/useChat";
 
+import MarkdownIt from "markdown-it";
+import DOMPurify from "dompurify";
+
+const md = new MarkdownIt({
+  breaks: true,
+  linkify: true,
+  html: false,
+});
+
 type Props = {
   title?: string;
   placeholder?: string;
@@ -10,6 +19,9 @@ type Props = {
   systemPrompt?: string;
   maxHistory?: number;
   position?: "br" | "bl" | "tr" | "tl";
+  welcomeMessage?: string;
+  maxTokens?: number;
+  stream?: boolean;
 };
 const props = withDefaults(defineProps<Props>(), {
   title: "AI Chat",
@@ -17,17 +29,42 @@ const props = withDefaults(defineProps<Props>(), {
   temperature: 0.4,
   maxHistory: 10,
   position: "br",
+  welcomeMessage: `안녕하세요! 무엇을 도와드릴까요?
+  예시 질문:
+  - "오늘 날씨 어때?"
+  - "React와 Vue 차이 알려줘"
+  - "코딩 테스트 연습 문제 추천해줘"`,
+  maxTokens: 1536,
+  stream: false, // 스트리밍 끄고 완성문 한 번에 표시 (끊김 완화)
 });
 
 const open = ref(false);
 const input = ref("");
 const expanding = ref(false);
+/* 인삿말 플래그 */
+const greeted = ref(false);
+const scrollEl = ref<HTMLDivElement | null>(null);
+
+/* 예시 프롬프트 (클릭해서 바로 전송) */
+const quickPrompts = [
+  "오늘 할 일 3가지만 정리해줘",
+  "React와 Vue의 핵심 차이를 표로 비교해줘",
+  "코딩 테스트용 DFS/BFS 템플릿 보여줘",
+];
+
 const { messages, pending, error, send, reset } = useChat({
   model: props.model,
   temperature: props.temperature,
   maxHistory: props.maxHistory,
   systemPrompt: props.systemPrompt,
+  maxTokens: props.maxTokens,
+  // stream: props.stream,
 });
+
+function renderMD(src: string) {
+  const html = md.render(src ?? "");
+  return DOMPurify.sanitize(html);
+}
 
 const btnPos = computed(() => {
   const p = props.position;
@@ -38,13 +75,37 @@ const btnPos = computed(() => {
   return `${base} left-4 top-4`;
 });
 
+/* 처음 열면 인삿말 */
+function ensureGreeting() {
+  if (greeted.value) return;
+  const nonSystemCount = messages.value.filter(
+    (m) => m.role !== "system"
+  ).length;
+  if (nonSystemCount === 0) {
+    messages.value.push({
+      role: "assistant",
+      content: props.welcomeMessage!,
+    } as any);
+    greeted.value = true;
+  }
+}
+
+/* 스크롤 하단 맞추기 */
+async function scrollToBottom() {
+  await nextTick();
+  const el = scrollEl.value;
+  if (el) el.scrollTop = el.scrollHeight;
+}
+
 function toggle() {
   if (!open.value) {
     expanding.value = true;
-    setTimeout(() => {
+    setTimeout(async () => {
       open.value = true;
       expanding.value = false;
-    }, 300); // 애니메이션 지속 시간과 동일하게 설정
+      ensureGreeting();
+      await scrollToBottom();
+    }, 300);
   } else {
     open.value = false;
   }
@@ -55,6 +116,13 @@ async function onSubmit() {
   if (!q) return;
   input.value = "";
   await send(q);
+  await scrollToBottom();
+}
+
+async function askQuick(prompt: string) {
+  input.value = "";
+  await send(prompt);
+  await scrollToBottom();
 }
 </script>
 
@@ -69,7 +137,20 @@ async function onSubmit() {
     aria-label="Toggle Chat"
     @click="toggle"
   >
-    💬
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke-width="1.5"
+      stroke="currentColor"
+      class="size-6"
+    >
+      <path
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        d="M20.25 8.511c.884.284 1.5 1.128 1.5 2.097v4.286c0 1.136-.847 2.1-1.98 2.193-.34.027-.68.052-1.02.072v3.091l-3-3c-1.354 0-2.694-.055-4.02-.163a2.115 2.115 0 0 1-.825-.242m9.345-8.334a2.126 2.126 0 0 0-.476-.095 48.64 48.64 0 0 0-8.048 0c-1.131.094-1.976 1.057-1.976 2.192v4.286c0 .837.46 1.58 1.155 1.951m9.345-8.334V6.637c0-1.621-1.152-3.026-2.76-3.235A48.455 48.455 0 0 0 11.25 3c-2.115 0-4.198.137-6.24.402-1.608.209-2.76 1.614-2.76 3.235v6.226c0 1.621 1.152 3.026 2.76 3.235.577.075 1.157.14 1.74.194V21l4.155-4.155"
+      />
+    </svg>
   </button>
 
   <!-- 패널 -->
@@ -93,7 +174,8 @@ async function onSubmit() {
         </div>
       </div>
 
-      <div class="flex-1 overflow-auto p-3 space-y-2 text-sm">
+      <!-- 메시지 영역 -->
+      <div ref="scrollEl" class="flex-1 overflow-auto p-3 space-y-2 text-sm">
         <div v-for="(m, i) in messages" :key="i">
           <template v-if="m.role === 'system'">
             <div class="text-xs text-gray-400 italic">{{ m.content }}</div>
@@ -109,15 +191,40 @@ async function onSubmit() {
             >
               <strong v-if="m.role === 'user'">You:</strong>
               <strong v-else>AI:</strong>
-              <span class="ml-2">{{ m.content }}</span>
+              <!-- ⬇️ 변경: assistant 응답은 Markdown 렌더링 -->
+              <div
+                v-if="m.role === 'assistant'"
+                class="prose prose-sm max-w-none prose-pre:whitespace-pre-wrap prose-table:shadow-sm"
+                v-html="renderMD(m.content)"
+              />
+              <div v-else class="whitespace-pre-wrap">{{ m.content }}</div>
             </div>
           </template>
         </div>
 
         <div v-if="pending" class="text-xs text-gray-500">생각 중...</div>
         <div v-if="error" class="text-xs text-red-500">오류: {{ error }}</div>
+
+        <!-- 빠른 질문 버튼 -->
+        <div
+          v-if="messages.filter((m) => m.role !== 'system').length <= 1"
+          class="pt-2"
+        >
+          <div class="text-xs text-gray-500 mb-2">빠른 질문</div>
+          <div class="flex flex-wrap gap-2">
+            <button
+              v-for="q in quickPrompts"
+              :key="q"
+              class="px-2 py-1 rounded-full border text-xs hover:bg-gray-50"
+              @click="askQuick(q)"
+            >
+              {{ q }}
+            </button>
+          </div>
+        </div>
       </div>
 
+      <!-- 입력 폼 -->
       <form class="p-3 border-t bg-gray-50" @submit.prevent="onSubmit">
         <textarea
           id="chat-input"
@@ -148,5 +255,24 @@ async function onSubmit() {
 .fade-leave-to {
   opacity: 0;
   transform: scale(0.9);
+}
+.prose :where(table) {
+  width: 100%;
+  border-collapse: collapse;
+  overflow: hidden;
+  border-radius: 0.5rem;
+}
+.prose :where(th, td) {
+  border: 1px solid #e5e7eb;
+  padding: 0.5rem 0.6rem;
+}
+.prose :where(thead th) {
+  background: #eef2ff;
+  font-weight: 600;
+}
+.prose :where(pre) {
+  background: #0b0f190d;
+  padding: 0.75rem;
+  border-radius: 0.5rem;
 }
 </style>

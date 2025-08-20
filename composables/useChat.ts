@@ -11,6 +11,7 @@ export function useChat(opts?: {
   temperature?: number;
   maxHistory?: number;
   systemPrompt?: string;
+  maxTokens?: number;
 }) {
   const messages = ref<ChatMessage[]>([]);
   const pending = ref(false);
